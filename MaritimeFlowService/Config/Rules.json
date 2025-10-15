@@ -1,0 +1,42 @@
+[
+  {
+    "Id": "guardzone_rule",
+    "Name": "Guard Zone",
+    "Priority": 200,
+    "Enabled": true,
+    "Exclusive": false,
+    "Condition": {
+      "Type": "SpatialCondition",
+      "Op": "in_polygon",
+      "Polygon": [
+        [ 22.1, 114.1 ],
+        [ 22.1, 114.2 ],
+        [ 22.2, 114.2 ],
+        [ 22.2, 114.1 ]
+      ]
+    },
+    "Action": {
+      "AlertType": "guard_zone_enter",
+      "Severity": "medium",
+      "Notify": [ "ops_team" ]
+    }
+  },
+  {
+    "Id": "ship_gathering",
+    "Name": "Ship Gathering",
+    "Priority": 150,
+    "Enabled": true,
+    "Exclusive": false,
+    "Condition": {
+      "Type": "AggregationCondition",
+      "Op": "count_in_window",
+      "Threshold": 5,
+      "WindowSeconds": 1800
+    },
+    "Action": {
+      "AlertType": "ship_gathering",
+      "Severity": "medium",
+      "Notify": [ "ops_team" ]
+    }
+  }
+]
