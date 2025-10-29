@@ -57,3 +57,4 @@ _ReSharper*/
 *.sln.iml
 
 .vscode/
+model/

@@ -1,42 +1,50 @@
 [
   {
-    "Id": "guardzone_rule",
-    "Name": "Guard Zone",
-    "Priority": 200,
-    "Enabled": true,
-    "Exclusive": false,
-    "Condition": {
-      "Type": "SpatialCondition",
-      "Op": "in_polygon",
-      "Polygon": [
-        [ 22.1, 114.1 ],
-        [ 22.1, 114.2 ],
-        [ 22.2, 114.2 ],
-        [ 22.2, 114.1 ]
-      ]
-    },
-    "Action": {
-      "AlertType": "guard_zone_enter",
-      "Severity": "medium",
-      "Notify": [ "ops_team" ]
-    }
-  },
-  {
     "Id": "ship_gathering",
-    "Name": "Ship Gathering",
-    "Priority": 150,
+    "Description": "在指定区域内，船舶聚集且速度超标",
+    "CombineLogic": "AND",
     "Enabled": true,
-    "Exclusive": false,
-    "Condition": {
-      "Type": "AggregationCondition",
-      "Op": "count_in_window",
-      "Threshold": 5,
-      "WindowSeconds": 1800
-    },
     "Action": {
       "AlertType": "ship_gathering",
-      "Severity": "medium",
-      "Notify": [ "ops_team" ]
-    }
+      "Severity": "Medium",
+      "Notify": ["ops_team"]
+    },
+    "Conditions": [
+      {
+        "Type": "ValueCondition",
+        "Field": "Speed",
+        "Operator": "<",
+        "Value": "20"
+      },
+      {
+        "Type": "AggregationCondition",
+        "Op": "count_in_window",
+        "Threshold": 2,
+        "WindowSeconds": 1800,
+        "Filter": {
+          "Type": "SpatialCondition",
+          "Op": "in_circle",
+          "CircleCenter": { "Lat": 22.15, "Lon": 114.15 },
+          "RadiusMeters": 1000.0
+        }
+      }
+    ]
+  },
+  {
+    "Id": "position_anomaly_rule",
+    "Description": "基于 H3 模型的位置异常检测",
+    "CombineLogic": "AND",
+    "Enabled": true,
+    "Action": {
+      "AlertType": "position_anomaly",
+      "Severity": "High",
+      "Notify": ["ops_team"]
+    },
+    "Conditions": [
+      {
+        "Type": "PositionAnomalyCondition",
+        "ModelFolder": "./model"
+      }
+    ]
   }
 ]

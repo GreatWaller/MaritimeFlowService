@@ -8,17 +8,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Confluent.Kafka" Version="2.11.1" />
+    <PackageReference Include="pocketken.H3" Version="4.0.0" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\H3Util\H3Util.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Update="Config\Rules.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
     <None Update="model\h3_transition_model_class_cargo.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

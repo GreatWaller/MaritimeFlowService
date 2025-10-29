@@ -1,4 +1,5 @@
-﻿using System;
+﻿using MaritimeFlowService.Engine;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -6,7 +7,7 @@ using System.Threading.Tasks;
 
 namespace MaritimeFlowService.Utils
 {
-    public static class GeoUtils
+    internal static class GeoUtils
     {
         public static double DistanceMeters((double Lat, double Lon) a, (double Lat, double Lon) b)
         {
@@ -18,7 +19,7 @@ namespace MaritimeFlowService.Utils
             return 2 * R * Math.Atan2(Math.Sqrt(hav), Math.Sqrt(1 - hav));
         }
 
-        public static bool PointInPolygon((double Lat, double Lon) pt, List<(double Lat, double Lon)> poly)
+        public static bool PointInPolygon((double Lat, double Lon) pt, List<Coordinate> poly)
         {
             int n = poly.Count;
             bool inside = false;
