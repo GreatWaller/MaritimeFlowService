@@ -9,6 +9,6 @@ namespace MaritimeFlowService.Streams
 {
     internal interface IEventConsumer
     {
-        Task StartAsync(Func<MaritimeEvent, Task> onEvent, CancellationToken token);
+        Task StartAsync(Func<AISData, Task> onEvent, CancellationToken token);
     }
 }

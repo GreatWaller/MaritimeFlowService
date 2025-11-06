@@ -1,0 +1,14 @@
+{
+    "Kafka": {
+        "Consumer": {
+          "BootstrapServers": "192.168.1.220:9092",
+          "GroupId": "ais-consumer-group",
+          "AutoOffsetReset": "Latest",
+          "EnableAutoCommit": false,
+          "SessionTimeoutMs": 30000,
+          "MaxPollIntervalMs": 300000
+        },
+        "Topic": "topic_gd_target",
+        "TargetKey": "key_gd_complete"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "Id": "ship_gathering",
+  "Description": "在指定区域内，船舶聚集且速度超标",
+  "CombineLogic": "AND",
+  "Enabled": true,
+  "Action": {
+    "AlertType": "ship_gathering",
+    "Severity": "Medium",
+    "Notify": ["ops_team"]
+  },
+  "Conditions": [
+    {
+      "Type": "ValueCondition",
+      "Field": "Speed",
+      "Operator": "<",
+      "Value": "20"
+    },
+    {
+      "Type": "AggregationCondition",
+      "Op": "count_in_window",
+      "Threshold": 2,
+      "WindowSeconds": 1800,
+      "Filter": {
+        "Type": "SpatialCondition",
+        "Op": "in_circle",
+        "CircleCenter": { "Lat": 22.15, "Lon": 114.15 },
+        "RadiusMeters": 1000.0
+      }
+    }
+  ]
+}

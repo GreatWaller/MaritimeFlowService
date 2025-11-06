@@ -1,0 +1,27 @@
+{
+  "Id": "position_anomaly_rule",
+  "Description": "基于 H3 模型的位置异常检测",
+  "CombineLogic": "AND",
+  "Enabled": true,
+  "Action": {
+    "AlertType": "position_anomaly",
+    "Severity": "High",
+    "Notify": ["ops_team"]
+  },
+  "Conditions": [
+    {
+      "Type": "SpatialCondition",
+      "Op": "in_polygon",
+      "Polygon": [
+        { "Lat": 22.316899768971318, "Lon": 114.1370050815793 },
+        { "Lat": 22.314835307537482, "Lon": 114.16000770356038 },
+        { "Lat": 22.289265216956345, "Lon": 114.13288520898567 },
+        { "Lat": 22.288471039838072, "Lon": 114.15708946047323 }
+      ]
+    },
+    {
+      "Type": "PositionAnomalyCondition",
+      "ModelFolder": "./model"
+    }
+  ]
+}

@@ -1,68 +1,162 @@
 ﻿using MaritimeFlowService.Alerts;
 using System.Collections.Concurrent;
-using System.Data;
+using System.Text.Json;
+using System.Threading;
 
 namespace MaritimeFlowService.Engine
 {
     internal class RuleEngine : IDisposable
     {
         private readonly ReaderWriterLockSlim ruleLock = new();
-        private readonly object statesLock = new();
-        private List<Rule> rules = [];
         private readonly ConcurrentDictionary<string, RuleState> states = new();
+        private List<Rule> rules = new();
 
         // 规则处理线程相关
         private readonly ConcurrentDictionary<string, BlockingCollection<MaritimeEvent>> ruleQueues = new();
         private readonly ConcurrentDictionary<string, Thread> ruleThreads = new();
         private readonly ConcurrentDictionary<string, CancellationTokenSource> ruleCts = new();
-        private ConcurrentBag<Alert> alertsCollection = [];
+        private ConcurrentBag<Alert> alertsCollection = new();
         private bool isInitialized;
 
+        private static readonly JsonSerializerOptions _jsonOptions = new()
+        {
+            WriteIndented = false,
+            IncludeFields = true,
+            PropertyNameCaseInsensitive = true
+        };
+
+        // 热更新：增量应用 newRules（新增 / 删除 / 修改）
         public void HotUpdateRules(List<Rule> newRules)
         {
+            if (newRules == null) return;
+
             ruleLock.EnterWriteLock();
             try
             {
-                // 停止所有现有规则线程
-                if (isInitialized)
+                var newDict = newRules.ToDictionary(r => r.Id);
+                var oldDict = rules.ToDictionary(r => r.Id);
+
+                // 删除：存在于 old 但不在 new 中
+                var removed = oldDict.Keys.Except(newDict.Keys).ToList();
+                foreach (var id in removed)
                 {
-                    StopRuleThreads();
+                    StopRuleInternal(id, removeState: true);
                 }
 
-                rules = [.. newRules.OrderByDescending(static r => r.Priority)];
+                // 新增：存在于 new 但不在 old 中
+                var added = newDict.Keys.Except(oldDict.Keys).ToList();
+                foreach (var id in added)
+                {
+                    // 保持 state（如果不存在则创建），然后启动线程（如果启用）
+                    var rule = newDict[id];
+                    states.GetOrAdd(rule.Id, id => new RuleState(id));
+                    if (rule.Enabled)
+                        StartRuleInternal(rule);
+                }
 
-                // 为每个规则创建专用线程
-                InitializeRuleThreads();
+                // 更新：存在于两者，但内容不同
+                var maybeUpdated = newDict.Keys.Intersect(oldDict.Keys);
+                foreach (var id in maybeUpdated)
+                {
+                    var oldRule = oldDict[id];
+                    var newRule = newDict[id];
+                    if (!RulesDeepEqual(oldRule, newRule))
+                    {
+                        // 停掉老线程但保留状态，启动新线程（如果启用）
+                        StopRuleInternal(id, removeState: false);
+                        states.GetOrAdd(newRule.Id, i => new RuleState(i));
+                        if (newRule.Enabled)
+                            StartRuleInternal(newRule);
+                    }
+                }
+
+                // 更新内存中 rules 列表（按优先级排序）
+                rules = newRules.OrderByDescending(r => r.Priority).ToList();
+                isInitialized = true;
             }
-            finally { ruleLock.ExitWriteLock(); }
+            finally
+            {
+                ruleLock.ExitWriteLock();
+            }
+        }
+
+        // 启动单个规则的线程与队列（内部使用）
+        private void StartRuleInternal(Rule rule)
+        {
+            if (rule == null) return;
+
+            // 如果已有运行实例，先停止
+            if (ruleThreads.ContainsKey(rule.Id))
+            {
+                StopRuleInternal(rule.Id, removeState: false);
+            }
+
+            var queue = new BlockingCollection<MaritimeEvent>();
+            ruleQueues[rule.Id] = queue;
+
+            var cts = new CancellationTokenSource();
+            ruleCts[rule.Id] = cts;
+
+            Thread thread = new Thread(() => ProcessRuleEvents(rule, queue, cts.Token))
+            {
+                Name = $"Rule-{rule.Id}-Thread",
+                IsBackground = true
+            };
+
+            ruleThreads[rule.Id] = thread;
+            thread.Start();
+
+            Console.WriteLine($"已为规则 {rule.Id} 创建专用线程 {thread.ManagedThreadId}");
+        }
+
+        // 停止单个规则线程并可选删除状态
+        private void StopRuleInternal(string ruleId, bool removeState)
+        {
+            if (string.IsNullOrEmpty(ruleId)) return;
+
+            if (ruleCts.TryRemove(ruleId, out var cts))
+            {
+                try { cts.Cancel(); } catch { }
+                cts.Dispose();
+            }
+
+            if (ruleThreads.TryRemove(ruleId, out var thread))
+            {
+                try
+                {
+                    if (thread.IsAlive)
+                    {
+                        _ = thread.Join(1000);
+                    }
+                }
+                catch { }
+            }
+
+            if (ruleQueues.TryRemove(ruleId, out var queue))
+            {
+                try
+                {
+                    queue.CompleteAdding();
+                    queue.Dispose();
+                }
+                catch { }
+            }
+
+            if (removeState)
+            {
+                states.TryRemove(ruleId, out _);
+            }
+
+            Console.WriteLine($"规则 {ruleId} 的线程已停止并清理（removeState={removeState}）");
         }
 
         private void InitializeRuleThreads()
         {
-            foreach (Rule? rule in rules.Where(r => r.Enabled))
+            // 按现有 rules 启动所有启用的规则线程（仅在第一次使用时）
+            foreach (var rule in rules.Where(r => r.Enabled))
             {
-                // 确保规则有状态对象
-                _ = states.GetOrAdd(rule.Id, id => new RuleState(id));
-
-                // 为规则创建事件队列
-                BlockingCollection<MaritimeEvent> queue = new BlockingCollection<MaritimeEvent>();
-                ruleQueues[rule.Id] = queue;
-
-                // 创建取消令牌
-                CancellationTokenSource cts = new CancellationTokenSource();
-                ruleCts[rule.Id] = cts;
-
-                // 创建并启动规则处理线程
-                Thread thread = new Thread(() => ProcessRuleEvents(rule, queue, cts.Token))
-                {
-                    Name = $"Rule-{rule.Id}-Thread",
-                    IsBackground = true
-                };
-
-                ruleThreads[rule.Id] = thread;
-                thread.Start();
-
-                Console.WriteLine($"已为规则 {rule.Id} 创建专用线程 {thread.ManagedThreadId}");
+                states.GetOrAdd(rule.Id, id => new RuleState(id));
+                StartRuleInternal(rule);
             }
 
             isInitialized = true;
@@ -70,22 +164,24 @@ namespace MaritimeFlowService.Engine
 
         private void StopRuleThreads()
         {
-            // 取消所有规则线程
-            foreach (CancellationTokenSource cts in ruleCts.Values)
+            // 取消所有规则线程并清理
+            foreach (var kv in ruleCts)
             {
-                cts.Cancel();
+                try { kv.Value.Cancel(); } catch { }
             }
 
-            // 等待所有线程结束
-            foreach (Thread thread in ruleThreads.Values)
+            foreach (var kv in ruleThreads)
             {
-                if (thread.IsAlive)
+                var t = kv.Value;
+                try
                 {
-                    _ = thread.Join(1000); // 等待最多1秒
+                    if (t.IsAlive)
+                        _ = t.Join(1000);
                 }
+                catch { }
             }
 
-            // 清空集合
+            // 清空集合（不删除 states）
             ruleQueues.Clear();
             ruleThreads.Clear();
             ruleCts.Clear();
@@ -99,21 +195,23 @@ namespace MaritimeFlowService.Engine
             {
                 foreach (MaritimeEvent ev in queue.GetConsumingEnumerable(token))
                 {
-                    RuleState state = states.GetOrAdd(rule.Id, id => new RuleState(id));
+                    var state = states.GetOrAdd(rule.Id, id => new RuleState(id));
 
                     // 处理多个条件
                     bool matched = false;
                     if (rule.Conditions != null && rule.Conditions.Count > 0)
                     {
-                        if (rule.CombineLogic == "AND")
+                        if (string.Equals(rule.CombineLogic, "AND", StringComparison.OrdinalIgnoreCase))
                         {
                             matched = rule.Conditions.All(c => c.Evaluate(ev, state, this));
                         }
+                        else if (string.Equals(rule.CombineLogic, "OR", StringComparison.OrdinalIgnoreCase))
+                        {
+                            matched = rule.Conditions.Any(c => c.Evaluate(ev, state, this));
+                        }
                         else
                         {
-                            matched = rule.CombineLogic == "OR"
-                                ? rule.Conditions.Any(c => c.Evaluate(ev, state, this))
-                                : throw new InvalidOperationException($"Unsupported combine logic: {rule.CombineLogic}");
+                            throw new InvalidOperationException($"Unsupported combine logic: {rule.CombineLogic}");
                         }
                     }
 
@@ -125,11 +223,11 @@ namespace MaritimeFlowService.Engine
                             alertsCollection.Add(new Alert
                             {
                                 RuleId = rule.Id,
-                                AlertType = rule.Action.AlertType,
-                                Severity = rule.Action.Severity,
-                                EntityId = ev.Id,
+                                AlertType = rule.Action?.AlertType ?? string.Empty,
+                                Severity = rule.Action?.Severity ?? string.Empty,
+                                EntityId = ev.MMSI,
                                 Timestamp = DateTime.UtcNow,
-                                Notify = rule.Action.Notify
+                                Notify = rule.Action?.Notify ?? new List<string>()
                             });
                         }
                     }
@@ -141,8 +239,7 @@ namespace MaritimeFlowService.Engine
             }
             catch (OperationCanceledException)
             {
-                // 线程被取消，正常退出
-                Console.WriteLine($"规则 {rule.Id} 的处理线程已停止");
+                Console.WriteLine($"规则 {rule.Id} 的处理线程已停止（取消）");
             }
             catch (Exception ex)
             {
@@ -150,28 +247,36 @@ namespace MaritimeFlowService.Engine
             }
         }
 
+        // 将事件分发到每个规则的队列并返回聚合告警
         public List<Alert> Evaluate(MaritimeEvent ev)
         {
             if (!isInitialized)
             {
-                InitializeRuleThreads();
+                ruleLock.EnterWriteLock();
+                try
+                {
+                    if (!isInitialized)
+                        InitializeRuleThreads();
+                }
+                finally { ruleLock.ExitWriteLock(); }
             }
 
             // 清空之前的告警结果
             lock (alertsCollection)
             {
-                alertsCollection = [];
+                alertsCollection = new ConcurrentBag<Alert>();
             }
 
-            // 将事件分发到每个规则的队列
+            // 将事件分发到每个规则的队列（读锁保护）
             ruleLock.EnterReadLock();
             try
             {
-                foreach (string ruleId in ruleQueues.Keys)
+                foreach (var kv in ruleQueues)
                 {
-                    if (ruleQueues.TryGetValue(ruleId, out BlockingCollection<MaritimeEvent>? queue))
+                    var queue = kv.Value;
+                    if (!queue.IsAddingCompleted)
                     {
-                        queue.Add(ev);
+                        try { queue.Add(ev); } catch { }
                     }
                 }
             }
@@ -180,35 +285,32 @@ namespace MaritimeFlowService.Engine
                 ruleLock.ExitReadLock();
             }
 
-            // 等待所有规则处理完成（这里可以设置一个超时时间）
-            Thread.Sleep(100); // 简单等待100毫秒，实际应用中可能需要更复杂的同步机制
+            // 简单等待，实际可替换为更精确的同步（例如计数器或任务）
+            Thread.Sleep(100);
 
-            // 处理排他性规则
             List<Alert> alerts;
             lock (alertsCollection)
             {
-                alerts = [.. alertsCollection];
+                alerts = alertsCollection.ToList();
             }
 
+            // 处理排他性规则：只保留优先级最高的排他性规则告警
             if (alerts.Any())
             {
-                // 如果有排他性规则触发，只保留优先级最高的那个
-                List<Rule> exclusiveRules = rules.Where(r => r.Enabled && r.Exclusive).ToList();
+                var exclusiveRules = rules.Where(r => r.Enabled && r.Exclusive).ToList();
                 if (exclusiveRules.Any())
                 {
-                    List<Alert> exclusiveAlerts = alerts.Where(a => exclusiveRules.Any(r => r.Id == a.RuleId)).ToList();
+                    var exclusiveAlerts = alerts.Where(a => exclusiveRules.Any(r => r.Id == a.RuleId)).ToList();
                     if (exclusiveAlerts.Any())
                     {
-                        // 找到触发的排他性规则中优先级最高的
-                        Rule? highestPriorityRule = exclusiveRules
+                        var highestPriorityRule = exclusiveRules
                             .Where(r => exclusiveAlerts.Any(a => a.RuleId == r.Id))
                             .OrderByDescending(r => r.Priority)
                             .FirstOrDefault();
 
                         if (highestPriorityRule != null)
                         {
-                            // 只保留这个规则的告警，移除其他所有告警
-                            alerts = [.. alerts.Where(a => a.RuleId == highestPriorityRule.Id)];
+                            alerts = alerts.Where(a => a.RuleId == highestPriorityRule.Id).ToList();
                         }
                     }
                 }
@@ -217,9 +319,73 @@ namespace MaritimeFlowService.Engine
             return alerts;
         }
 
+        // 简单的深度比较（序列化比较）
+        private static bool RulesDeepEqual(Rule a, Rule b)
+        {
+            if (ReferenceEquals(a, b)) return true;
+            if (a == null || b == null) return false;
+            var sa = JsonSerializer.Serialize(a, _jsonOptions);
+            var sb = JsonSerializer.Serialize(b, _jsonOptions);
+            return sa == sb;
+        }
+
         public void Dispose()
         {
-            throw new NotImplementedException();
+            ruleLock.EnterWriteLock();
+            try
+            {
+                StopRuleThreads();
+                // 清理 states
+                states.Clear();
+            }
+            finally
+            {
+                ruleLock.ExitWriteLock();
+            }
+        }
+
+        public void HotUpdateRule(Rule newRule)
+        {
+            if (newRule == null) return;
+
+            ruleLock.EnterWriteLock();
+            try
+            {
+                var existing = rules.FirstOrDefault(r => r.Id == newRule.Id);
+                if (existing == null)
+                {
+                    // 新增规则
+                    rules.Add(newRule);
+                    rules = rules.OrderByDescending(r => r.Priority).ToList();
+                    states.GetOrAdd(newRule.Id, id => new RuleState(id));
+                    if (newRule.Enabled) StartRuleInternal(newRule);
+                    Console.WriteLine($"规则 {newRule.Id} 已新增并启动（如果启用）");
+                    return;
+                }
+
+                // 若无变化只返回
+                if (RulesDeepEqual(existing, newRule))
+                {
+                    Console.WriteLine($"规则 {newRule.Id} 无变化，忽略热更");
+                    return;
+                }
+
+                // 替换内存中的规则定义并按需重启线程（保留状态）
+                var idx = rules.FindIndex(r => r.Id == newRule.Id);
+                if (idx >= 0) rules[idx] = newRule;
+                rules = rules.OrderByDescending(r => r.Priority).ToList();
+
+                // 先停止现有线程（保留状态），再根据 newRule.Enabled 启动
+                StopRuleInternal(newRule.Id, removeState: false);
+                states.GetOrAdd(newRule.Id, id => new RuleState(id));
+                if (newRule.Enabled) StartRuleInternal(newRule);
+
+                Console.WriteLine($"规则 {newRule.Id} 已更新并重启（如果启用）");
+            }
+            finally
+            {
+                ruleLock.ExitWriteLock();
+            }
         }
     }
 }

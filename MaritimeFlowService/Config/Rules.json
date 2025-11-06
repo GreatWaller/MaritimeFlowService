@@ -42,6 +42,16 @@
     },
     "Conditions": [
       {
+        "Type": "SpatialCondition",
+        "Op": "in_polygon",
+        "Polygon": [
+          { "Lat": 22.316899768971318, "Lon": 114.1370050815793 },
+          { "Lat": 22.314835307537482, "Lon": 114.16000770356038 },
+          { "Lat": 22.289265216956345, "Lon": 114.13288520898567 },
+          { "Lat": 22.288471039838072, "Lon": 114.15708946047323 }
+        ]
+      },
+      {
         "Type": "PositionAnomalyCondition",
         "ModelFolder": "./model"
       }
