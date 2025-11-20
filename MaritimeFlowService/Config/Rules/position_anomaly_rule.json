@@ -1,6 +1,6 @@
 {
   "Id": "position_anomaly_rule",
-  "Description": "»ùÓÚ H3 Ä£ÐÍµÄÎ»ÖÃÒì³£¼ì²â",
+  "Description": "ï¿½ï¿½ï¿½ï¿½ H3 Ä£ï¿½Íµï¿½Î»ï¿½ï¿½ï¿½ì³£ï¿½ï¿½ï¿½",
   "CombineLogic": "AND",
   "Enabled": true,
   "Action": {

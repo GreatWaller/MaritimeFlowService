@@ -1,6 +1,6 @@
 {
   "Id": "ship_gathering",
-  "Description": "在指定区域内，船舶聚集且速度超标",
+  "Description": "锟斤拷指锟斤拷锟斤拷锟斤拷锟节ｏ拷锟斤拷锟斤拷锟桔硷拷锟斤拷锟劫度筹拷锟斤拷",
   "CombineLogic": "AND",
   "Enabled": true,
   "Action": {

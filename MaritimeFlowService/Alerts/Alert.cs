@@ -12,6 +12,9 @@ namespace MaritimeFlowService.Alerts
         public string AlertType { get; set; }
         public string Severity { get; set; }
         public string EntityId { get; set; }
+
+        public double Lat {  get; set; }
+        public double Lon { get; set; }
         public DateTime Timestamp { get; set; }
         public List<string> Notify { get; set; }
     }

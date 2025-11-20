@@ -226,6 +226,8 @@ namespace MaritimeFlowService.Engine
                                 AlertType = rule.Action?.AlertType ?? string.Empty,
                                 Severity = rule.Action?.Severity ?? string.Empty,
                                 EntityId = ev.MMSI,
+                                Lat = ev.Location.Lat,
+                                Lon = ev.Location.Lon,
                                 Timestamp = DateTime.UtcNow,
                                 Notify = rule.Action?.Notify ?? new List<string>()
                             });
